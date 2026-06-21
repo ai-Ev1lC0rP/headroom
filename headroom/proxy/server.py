@@ -3025,9 +3025,17 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
         return proxy.metrics.savings_tracker.history_response(history_mode=history_mode)
 
-    @app.get("/transformations/feed")
+    @app.get("/transformations/feed", dependencies=[Depends(_require_loopback)])
     async def transformations_feed(limit: int = 20):
         """Get recent message transformations for the live feed.
+
+        Loopback-only: when ``log_full_messages`` is enabled this returns the
+        full request/response message bodies (prompt content and completions)
+        via ``request_messages`` / ``compressed_messages`` / ``response_content``.
+        With the default ``--host 0.0.0.0`` Docker bind, leaving it open would
+        expose chat history to anyone able to reach the proxy port. The
+        dashboard runs in the user's browser on loopback, so this gate does not
+        break legitimate use.
 
         Returns empty list if log_full_messages is disabled (messages are not stored).
         """
@@ -3122,9 +3130,16 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         report = tracker.get_report()
         return report.to_dict()
 
-    @app.post("/cache/clear")
+    @app.post("/cache/clear", dependencies=[Depends(_require_loopback)])
     async def clear_cache():
-        """Clear the response cache."""
+        """Clear the response cache.
+
+        Loopback-only: this mutates server state. With the default
+        ``--host 0.0.0.0`` Docker bind, an unauthenticated POST from any
+        network-reachable client would otherwise let them forcibly evict the
+        proxy's cached completions — a denial-of-service / cost-amplification
+        lever (every cleared entry forces a fresh upstream call).
+        """
         if proxy.cache:
             await proxy.cache.clear()
             return {"status": "cleared"}
